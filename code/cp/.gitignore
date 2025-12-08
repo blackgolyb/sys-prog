@@ -1,0 +1,67 @@
+# Rust build artifacts
+/target/
+**/*.rs.bk
+*.pdb
+
+# Cargo lock file (uncomment if this is a library)
+# Cargo.lock
+
+# Generated documentation
+/doc/
+
+# IDE / Editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+*.sublime-*
+.project
+.settings/
+.classpath
+
+# Output files (generated charts and images)
+/output/*.png
+/output/*.svg
+/output/*.jpg
+/output/*.jpeg
+
+# But keep the output directory itself
+!/output/.gitkeep
+
+# Backup files
+*.bak
+*.orig
+
+# OS generated files
+Thumbs.db
+.Spotlight-V100
+.Trashes
+
+# Temporary files
+*.tmp
+*.temp
+
+# Logs
+*.log
+
+# Rust profiling
+perf.data
+perf.data.old
+flamegraph.svg
+
+# Build scripts
+*.o
+*.so
+*.dylib
+*.dll
+*.exe
+
+# Test coverage
+tarpaulin-report.html
+cobertura.xml
+lcov.info
+
+# Flamegraph
+flamegraph/

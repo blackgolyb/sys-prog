@@ -1,0 +1,20 @@
+[package]
+name = "cp"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+plotters = "0.3"
+ratatui = "0.28"
+crossterm = "0.28"
+
+[features]
+default = []
+
+[[bin]]
+name = "cp-visual"
+path = "src/bin/visual.rs"
+
+[[bin]]
+name = "cp-tui"
+path = "src/bin/tui.rs"
