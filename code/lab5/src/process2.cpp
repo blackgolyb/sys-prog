@@ -4,11 +4,15 @@
 #include <string.h>
 #include <signal.h>
 #include <pthread.h>
+#include <fcntl.h>
+#include <sys/stat.h>
 
 #define BUFFER_SIZE 256
 
-int read_fd;
-int write_fd;
+char* fifo_read_path;
+char* fifo_write_path;
+int read_fd = -1;
+int write_fd = -1;
 volatile sig_atomic_t running = 1;
 
 void signal_handler(int sig) {
@@ -22,19 +26,39 @@ void* reader_thread(void* arg) {
     char buffer[BUFFER_SIZE];
 
     printf("[ПРОЦЕС 2] Нитка читання запущена\n");
+    printf("[ПРОЦЕС 2] Відкриття FIFO для читання: %s\n", fifo_read_path);
+
+    read_fd = open(fifo_read_path, O_RDONLY);
+    if (read_fd < 0) {
+        perror("[ПРОЦЕС 2] Помилка відкриття FIFO для читання");
+        pthread_exit(NULL);
+    }
+
+    printf("[ПРОЦЕС 2] FIFO для читання успішно відкрито\n");
+    printf("[ПРОЦЕС 2] Відкриття FIFO для запису: %s\n", fifo_write_path);
+
+    write_fd = open(fifo_write_path, O_WRONLY);
+    if (write_fd < 0) {
+        perror("[ПРОЦЕС 2] Помилка відкриття FIFO для запису");
+        close(read_fd);
+        pthread_exit(NULL);
+    }
+
+    printf("[ПРОЦЕС 2] FIFO для запису успішно відкрито\n");
+    printf("[ПРОЦЕС 2] Готовий до роботи (автоматичне переспрямування)\n");
 
     while (running) {
         ssize_t bytes_read = read(read_fd, buffer, BUFFER_SIZE);
 
         if (bytes_read < 0) {
             if (running) {
-                perror("[ПРОЦЕС 2] Помилка читання з каналу");
+                perror("[ПРОЦЕС 2] Помилка читання з FIFO");
             }
             break;
         }
 
         if (bytes_read == 0) {
-            printf("[ПРОЦЕС 2] Процес 1 завершив передачу даних\n");
+            printf("[ПРОЦЕС 2] Процес 1 завершив передачу даних (EOF)\n");
             break;
         }
 
@@ -43,7 +67,7 @@ void* reader_thread(void* arg) {
         ssize_t bytes_written = write(write_fd, buffer, bytes_read);
 
         if (bytes_written < 0) {
-            perror("[ПРОЦЕС 2] Помилка запису в канал");
+            perror("[ПРОЦЕС 2] Помилка запису в FIFO");
             break;
         }
 
@@ -51,28 +75,34 @@ void* reader_thread(void* arg) {
     }
 
     printf("[ПРОЦЕС 2] Нитка читання завершена\n");
-    close(read_fd);
-    close(write_fd);
+
+    if (read_fd >= 0) {
+        close(read_fd);
+    }
+    if (write_fd >= 0) {
+        close(write_fd);
+    }
 
     return NULL;
 }
 
 int main(int argc, char *argv[]) {
     if (argc != 3) {
-        fprintf(stderr, "Використання: %s <read_fd> <write_fd>\n", argv[0]);
+        fprintf(stderr, "Використання: %s <fifo_read_path> <fifo_write_path>\n", argv[0]);
         exit(1);
     }
 
-    read_fd = atoi(argv[1]);
-    write_fd = atoi(argv[2]);
+    fifo_read_path = argv[1];
+    fifo_write_path = argv[2];
 
     printf("=== ПРОЦЕС 2 ЗАПУЩЕНО ===\n");
-    printf("[ПРОЦЕС 2] Дескриптор читання: %d\n", read_fd);
-    printf("[ПРОЦЕС 2] Дескриптор запису: %d\n", write_fd);
+    printf("[ПРОЦЕС 2] FIFO для читання: %s\n", fifo_read_path);
+    printf("[ПРОЦЕС 2] FIFO для запису: %s\n", fifo_write_path);
     printf("[ПРОЦЕС 2] Роль: Прийом від процесу 1 → Переспрямування до процесу 3\n");
 
     signal(SIGTERM, signal_handler);
     signal(SIGINT, signal_handler);
+    signal(SIGPIPE, SIG_IGN);
 
     pthread_t reader_tid;
 

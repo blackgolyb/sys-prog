@@ -2,14 +2,22 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <sys/wait.h>
+#include <sys/stat.h>
 #include <signal.h>
 #include <string.h>
 
-#define READ_END 0
-#define WRITE_END 1
+#define FIFO_1_2 "/tmp/fifo_1_2"
+#define FIFO_2_3 "/tmp/fifo_2_3"
+#define FIFO_3_4 "/tmp/fifo_3_4"
 
 pid_t pids[4];
 int num_processes = 0;
+
+void cleanup_fifos() {
+    unlink(FIFO_1_2);
+    unlink(FIFO_2_3);
+    unlink(FIFO_3_4);
+}
 
 void cleanup_and_exit(int sig) {
     printf("\n[MANAGER] Отримано сигнал завершення. Зупинка всіх процесів...\n");
@@ -26,61 +34,56 @@ void cleanup_and_exit(int sig) {
         }
     }
 
+    cleanup_fifos();
+
     printf("[MANAGER] Всі процеси завершено.\n");
     exit(0);
 }
 
 int main(int argc, char *argv[]) {
-    // Канали для зв'язку: 1→2, 2→3, 3→4
-    int pipe_1_2[2];
-    int pipe_2_3[2];
-    int pipe_3_4[2];
-
-    printf("=== MANAGER: Запуск системи обміну даними ===\n");
+    printf("=== MANAGER: Запуск системи обміну даними через іменовані канали ===\n");
     printf("Схема передачі: 1 → 2 → 3 → 4 (автоматичне переспрямування)\n");
     printf("Для завершення натисніть Ctrl+C\n\n");
 
     signal(SIGINT, cleanup_and_exit);
     signal(SIGTERM, cleanup_and_exit);
 
-    if (pipe(pipe_1_2) < 0) {
-        perror("[MANAGER] Помилка створення pipe_1_2");
+    cleanup_fifos();
+
+    printf("[MANAGER] Створення іменованих каналів...\n");
+
+    if (mkfifo(FIFO_1_2, S_IRUSR | S_IWUSR) < 0) {
+        perror("[MANAGER] Помилка створення FIFO_1_2");
         exit(1);
     }
+    printf("[MANAGER] Створено FIFO: %s\n", FIFO_1_2);
 
-    if (pipe(pipe_2_3) < 0) {
-        perror("[MANAGER] Помилка створення pipe_2_3");
+    if (mkfifo(FIFO_2_3, S_IRUSR | S_IWUSR) < 0) {
+        perror("[MANAGER] Помилка створення FIFO_2_3");
+        cleanup_fifos();
         exit(1);
     }
+    printf("[MANAGER] Створено FIFO: %s\n", FIFO_2_3);
 
-    if (pipe(pipe_3_4) < 0) {
-        perror("[MANAGER] Помилка створення pipe_3_4");
+    if (mkfifo(FIFO_3_4, S_IRUSR | S_IWUSR) < 0) {
+        perror("[MANAGER] Помилка створення FIFO_3_4");
+        cleanup_fifos();
         exit(1);
     }
+    printf("[MANAGER] Створено FIFO: %s\n", FIFO_3_4);
 
-    printf("[MANAGER] Всі канали створено успішно\n");
-
-    char read_fd_str[16];
-    char write_fd_str[16];
+    printf("[MANAGER] Всі іменовані канали створено успішно\n\n");
 
     printf("[MANAGER] Запуск процесу 1...\n");
     pids[0] = fork();
     if (pids[0] < 0) {
         perror("[MANAGER] Помилка fork для процесу 1");
+        cleanup_fifos();
         exit(1);
     }
 
     if (pids[0] == 0) {
-        // Дочірній процес 1
-        close(pipe_1_2[READ_END]);
-        close(pipe_2_3[READ_END]);
-        close(pipe_2_3[WRITE_END]);
-        close(pipe_3_4[READ_END]);
-        close(pipe_3_4[WRITE_END]);
-
-        sprintf(write_fd_str, "%d", pipe_1_2[WRITE_END]);
-
-        execl("./build/process1", "process1", write_fd_str, NULL);
+        execl("./build/process1", "process1", FIFO_1_2, NULL);
         perror("[MANAGER] Помилка execl для процесу 1");
         exit(1);
     }
@@ -90,20 +93,12 @@ int main(int argc, char *argv[]) {
     pids[1] = fork();
     if (pids[1] < 0) {
         perror("[MANAGER] Помилка fork для процесу 2");
+        cleanup_fifos();
         exit(1);
     }
 
     if (pids[1] == 0) {
-        // Дочірній процес 2
-        close(pipe_1_2[WRITE_END]);
-        close(pipe_2_3[READ_END]);
-        close(pipe_3_4[READ_END]);
-        close(pipe_3_4[WRITE_END]);
-
-        sprintf(read_fd_str, "%d", pipe_1_2[READ_END]);
-        sprintf(write_fd_str, "%d", pipe_2_3[WRITE_END]);
-
-        execl("./build/process2", "process2", read_fd_str, write_fd_str, NULL);
+        execl("./build/process2", "process2", FIFO_1_2, FIFO_2_3, NULL);
         perror("[MANAGER] Помилка execl для процесу 2");
         exit(1);
     }
@@ -113,20 +108,12 @@ int main(int argc, char *argv[]) {
     pids[2] = fork();
     if (pids[2] < 0) {
         perror("[MANAGER] Помилка fork для процесу 3");
+        cleanup_fifos();
         exit(1);
     }
 
     if (pids[2] == 0) {
-        // Дочірній процес 3
-        close(pipe_1_2[READ_END]);
-        close(pipe_1_2[WRITE_END]);
-        close(pipe_2_3[WRITE_END]);
-        close(pipe_3_4[READ_END]);
-
-        sprintf(read_fd_str, "%d", pipe_2_3[READ_END]);
-        sprintf(write_fd_str, "%d", pipe_3_4[WRITE_END]);
-
-        execl("./build/process3", "process3", read_fd_str, write_fd_str, NULL);
+        execl("./build/process3", "process3", FIFO_2_3, FIFO_3_4, NULL);
         perror("[MANAGER] Помилка execl для процесу 3");
         exit(1);
     }
@@ -136,31 +123,16 @@ int main(int argc, char *argv[]) {
     pids[3] = fork();
     if (pids[3] < 0) {
         perror("[MANAGER] Помилка fork для процесу 4");
+        cleanup_fifos();
         exit(1);
     }
 
     if (pids[3] == 0) {
-        // Дочірній процес 4
-        close(pipe_1_2[READ_END]);
-        close(pipe_1_2[WRITE_END]);
-        close(pipe_2_3[READ_END]);
-        close(pipe_2_3[WRITE_END]);
-        close(pipe_3_4[WRITE_END]);
-
-        sprintf(read_fd_str, "%d", pipe_3_4[READ_END]);
-
-        execl("./build/process4", "process4", read_fd_str, NULL);
+        execl("./build/process4", "process4", FIFO_3_4, NULL);
         perror("[MANAGER] Помилка execl для процесу 4");
         exit(1);
     }
     num_processes++;
-
-    close(pipe_1_2[READ_END]);
-    close(pipe_1_2[WRITE_END]);
-    close(pipe_2_3[READ_END]);
-    close(pipe_2_3[WRITE_END]);
-    close(pipe_3_4[READ_END]);
-    close(pipe_3_4[WRITE_END]);
 
     printf("[MANAGER] Всі процеси запущено. Система працює...\n\n");
 
@@ -169,6 +141,8 @@ int main(int argc, char *argv[]) {
         pid_t finished_pid = wait(&status);
         printf("[MANAGER] Процес з PID %d завершено\n", finished_pid);
     }
+
+    cleanup_fifos();
 
     printf("\n[MANAGER] Всі процеси завершили роботу. Вихід.\n");
 

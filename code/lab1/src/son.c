@@ -14,25 +14,18 @@ int parse_arguments(int argc, char *argv[]) {
   return atoi(argv[1]);
 }
 
-void write_info_to_file(int level, pid_t ppid, pid_t mypid) {
+void write_info_to_file(int level, pid_t ppid, pid_t mypid, pid_t child_pid) {
   char filename[20];
-  sprintf(filename, "son%d.txt", level);
+  sprintf(filename, "res.txt");
 
-  FILE *fl = fopen(filename, "w");
+  FILE *fl = fopen(filename, "a");
   if (!fl) {
     perror("File open error");
     exit(1);
   }
-  fprintf(fl, "Hello, Son! My Father ID=%d, My ID=%d, Level=%d\n", ppid, mypid,
-          level);
+  fprintf(fl, "Hello, Son! My Father ID=%d, My ID=%d, Your ID=%d, Level=%d\n",
+          ppid, mypid, child_pid, level);
   fclose(fl);
-}
-
-void spawn_next_child(int level) {
-  if (level < N) {
-    pid_t child_pid = create_child_process_or_fail(level + 1);
-    waitpid(child_pid, NULL, 0);
-  }
 }
 
 int main(int argc, char *argv[]) {
@@ -40,10 +33,16 @@ int main(int argc, char *argv[]) {
   pid_t mypid = getpid();
   pid_t ppid = getppid();
 
-  printf("Son level %d started. PID=%d, Parent=%d\n", level, mypid, ppid);
-  write_info_to_file(level, ppid, mypid);
-  spawn_next_child(level);
+  if (level > N)
+    return 0;
 
-  printf("Son level %d finished.\n", level);
+  pid_t child_pid = fork_or_fail();
+  if (child_pid == 0) {
+    spawn_son(level + 1);
+  } else {
+    write_info_to_file(level, ppid, mypid, child_pid);
+    waitpid(child_pid, NULL, 0);
+  }
+
   return 0;
 }
