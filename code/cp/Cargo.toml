@@ -12,9 +12,13 @@ crossterm = "0.28"
 default = []
 
 [[bin]]
-name = "cp-visual"
+name = "visual"
 path = "src/bin/visual.rs"
 
 [[bin]]
-name = "cp-tui"
+name = "tui"
 path = "src/bin/tui.rs"
+
+[[bin]]
+name = "stats"
+path = "src/bin/statistic.rs"

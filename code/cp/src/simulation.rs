@@ -4,13 +4,24 @@ use std::rc::Rc;
 use crate::base::{Process, Scheduler, SchedulingEvent};
 use crate::rr_scheduler::RRScheduler;
 
-pub struct ScheduleSimulation {
+pub struct ScheduleSimulation<F>
+where
+    F: Fn(u32) -> u32 + 'static,
+{
     processes: Vec<(u32, u32, u32)>, // (id, arrival_time, burst_time)
-    scheduler: Rc<RefCell<RRScheduler>>,
+    scheduler: Rc<RefCell<RRScheduler<F>>>,
+    description: String,
 }
 
-impl ScheduleSimulation {
-    pub fn new(process_specs: Vec<(u32, u32)>, scheduler: Rc<RefCell<RRScheduler>>) -> Self {
+impl<F> ScheduleSimulation<F>
+where
+    F: Fn(u32) -> u32 + 'static,
+{
+    pub fn new(
+        process_specs: Vec<(u32, u32)>,
+        scheduler: Rc<RefCell<RRScheduler<F>>>,
+        description: String,
+    ) -> Self {
         let processes = process_specs
             .into_iter()
             .enumerate()
@@ -20,7 +31,19 @@ impl ScheduleSimulation {
         ScheduleSimulation {
             processes,
             scheduler,
+            description,
         }
+    }
+
+    pub fn description(&self) -> &str {
+        &self.description
+    }
+
+    pub fn processes(&self) -> Vec<(u32, u32)> {
+        self.processes
+            .iter()
+            .map(|&(_id, arrival_time, burst_time)| (arrival_time, burst_time))
+            .collect()
     }
 
     fn add_newly_available_processes(&mut self, from_time: u32, to_time: u32) {
@@ -74,8 +97,8 @@ mod tests {
             (0, 4), // arrives at 0, needs 4 units
         ];
 
-        let scheduler = RRScheduler::new(2);
-        let mut simulation = ScheduleSimulation::new(processes, scheduler);
+        let scheduler = RRScheduler::new(|_| 2);
+        let mut simulation = ScheduleSimulation::new(processes, scheduler, "".to_owned());
         let events = simulation.run();
 
         // All processes should be scheduled
@@ -101,8 +124,8 @@ mod tests {
             (7, 4),  // arrives at 7, needs 4 units
         ];
 
-        let scheduler = RRScheduler::new(4);
-        let mut simulation = ScheduleSimulation::new(processes, scheduler);
+        let scheduler = RRScheduler::new(|_| 4);
+        let mut simulation = ScheduleSimulation::new(processes, scheduler, "".to_owned());
         let events = simulation.run();
 
         // Verify all processes were executed
@@ -127,8 +150,8 @@ mod tests {
             (1, 2), // arrives at 1, needs 2 units
         ];
 
-        let scheduler = RRScheduler::new(5);
-        let mut simulation = ScheduleSimulation::new(processes, scheduler);
+        let scheduler = RRScheduler::new(|_| 5);
+        let mut simulation = ScheduleSimulation::new(processes, scheduler, "".to_owned());
         let events = simulation.run();
 
         // Verify both processes complete
@@ -158,8 +181,8 @@ mod tests {
     fn test_simulation_empty_processes() {
         let processes = vec![];
 
-        let scheduler = RRScheduler::new(3);
-        let mut simulation = ScheduleSimulation::new(processes, scheduler);
+        let scheduler = RRScheduler::new(|_| 3);
+        let mut simulation = ScheduleSimulation::new(processes, scheduler, "".to_owned());
         let events = simulation.run();
 
         assert_eq!(events.len(), 0);
@@ -172,8 +195,8 @@ mod tests {
             (3, 3), // arrives at 3, needs 3 units (changed from 10 to ensure it arrives during first process execution)
         ];
 
-        let scheduler = RRScheduler::new(4);
-        let mut simulation = ScheduleSimulation::new(processes, scheduler);
+        let scheduler = RRScheduler::new(|_| 4);
+        let mut simulation = ScheduleSimulation::new(processes, scheduler, "".to_owned());
         let events = simulation.run();
 
         // Both processes should complete
@@ -200,8 +223,8 @@ mod tests {
             (5, 6), // P3: arrives at 5
         ];
 
-        let scheduler = RRScheduler::new(3);
-        let mut simulation = ScheduleSimulation::new(processes, scheduler);
+        let scheduler = RRScheduler::new(|_| 3);
+        let mut simulation = ScheduleSimulation::new(processes, scheduler, "".to_owned());
         let events = simulation.run();
 
         // All 4 processes should be scheduled

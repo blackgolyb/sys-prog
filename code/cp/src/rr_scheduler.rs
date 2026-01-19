@@ -1,105 +1,104 @@
 use std::cell::RefCell;
-use std::collections::VecDeque;
 use std::rc::Rc;
 
 use crate::base::{Process, Scheduler, SchedulingEvent};
 
 /// Iterator that yields scheduling events
-pub struct RRScheduleIterator {
-    time_quantum: u32,
-    ready_queue: VecDeque<Process>,
+pub struct RRScheduleIterator<F>
+where
+    F: Fn(u32) -> u32 + 'static,
+{
     current_time: u32,
-    scheduler: Rc<RefCell<RRScheduler>>,
-    current_execution: Option<(Process, u32)>, // (process, start_time)
+    idle_time: u32,
+    stop_after_idle_time: u32,
+    scheduler: Rc<RefCell<RRScheduler<F>>>,
 }
 
-impl RRScheduleIterator {
-    fn new(time_quantum: u32, scheduler: Rc<RefCell<RRScheduler>>) -> Self {
+impl<F> RRScheduleIterator<F>
+where
+    F: Fn(u32) -> u32 + 'static,
+{
+    fn new(scheduler: Rc<RefCell<RRScheduler<F>>>) -> Self {
         Self {
-            time_quantum,
-            ready_queue: VecDeque::new(),
             current_time: 0,
+            idle_time: 0,
+            stop_after_idle_time: 10,
             scheduler,
-            current_execution: None,
         }
     }
 
-    fn check_for_new_processes(&mut self) {
+    fn get_process(&mut self) -> Option<Process> {
         let mut scheduler = self.scheduler.borrow_mut();
-        // Move all new processes from scheduler to ready queue
-        while let Some(process) = scheduler.processes.pop() {
-            self.ready_queue.push_back(process);
-        }
+        scheduler.processes.pop()
+    }
+
+    fn put_back_process(&mut self, process: Process) {
+        let mut scheduler = self.scheduler.borrow_mut();
+        scheduler.processes.push(process);
+    }
+
+    fn time_quantum(&self) -> u32 {
+        let scheduler = self.scheduler.borrow();
+        scheduler.get_time_quantum()
     }
 }
 
-impl Iterator for RRScheduleIterator {
+impl<F> Iterator for RRScheduleIterator<F>
+where
+    F: Fn(u32) -> u32 + 'static,
+{
     type Item = SchedulingEvent;
 
     fn next(&mut self) -> Option<Self::Item> {
-        // Check for new processes added to scheduler
-        self.check_for_new_processes();
+        let time_quantum = self.time_quantum();
+        if let Some(mut process) = self.get_process() {
+            self.idle_time = 0;
+            let processed_time = process.perform(time_quantum);
 
-        // If we have a current execution, continue or finish it
-        if let Some((mut process, start_time)) = self.current_execution.take() {
-            let execution_time = self.current_time - start_time;
-
-            if execution_time >= self.time_quantum || process.is_completed() {
-                // Time quantum expired or process completed
-                let end_time = self.current_time;
-                let is_completed = process.is_completed();
-                let process_id = process.id;
-
-                // If not completed, put back in ready queue
-                if !is_completed {
-                    process.pause();
-                    self.ready_queue.push_back(process);
-                }
-
-                self.current_time = end_time;
-
-                return Some(SchedulingEvent::ProcessExecution {
-                    process_id,
-                    start_time,
-                    end_time,
-                    is_completed,
-                });
-            } else {
-                // Continue execution
-                process.perform();
-                self.current_time += 1;
-                self.current_execution = Some((process, start_time));
-                return self.next();
-            }
-        }
-
-        // No current execution, check for new processes again
-        self.check_for_new_processes();
-
-        // Try to get next process from ready queue
-        if let Some(mut process) = self.ready_queue.pop_front() {
             let start_time = self.current_time;
-            process.perform();
+            let id = process.id;
+            let is_completed = process.is_completed();
+            self.current_time += processed_time;
+
+            if !is_completed {
+                process.pause();
+                self.put_back_process(process);
+            }
+
+            return Some(SchedulingEvent::ProcessExecution {
+                process_id: id,
+                start_time,
+                end_time: self.current_time,
+                is_completed,
+            });
+        } else if self.idle_time < self.stop_after_idle_time {
+            let idle_start = self.current_time;
             self.current_time += 1;
-            self.current_execution = Some((process, start_time));
-            return self.next();
+            self.idle_time += 1;
+
+            return Some(SchedulingEvent::CpuIdle { time: idle_start });
         }
 
-        // No processes available, return None to end iteration
         None
     }
 }
 
-pub struct RRScheduler {
-    time_quantum: u32,
+pub struct RRScheduler<F>
+where
+    F: Fn(u32) -> u32 + 'static,
+{
+    time_quantum_func: F,
     processes: Vec<Process>,
-    scheduler_ref: Option<Rc<RefCell<RRScheduler>>>,
+    scheduler_ref: Option<Rc<RefCell<RRScheduler<F>>>>,
 }
 
-impl RRScheduler {
-    pub fn new(time_quantum: u32) -> Rc<RefCell<Self>> {
+impl<F> RRScheduler<F>
+where
+    F: Fn(u32) -> u32 + 'static,
+{
+    pub fn new(time_quantum_func: F) -> Rc<RefCell<Self>> {
         let scheduler = Rc::new(RefCell::new(RRScheduler {
-            time_quantum,
+            time_quantum_func,
             processes: Vec::new(),
             scheduler_ref: None,
         }));
@@ -109,38 +108,36 @@ impl RRScheduler {
     }
 
     pub fn get_time_quantum(&self) -> u32 {
-        self.time_quantum
+        (self.time_quantum_func)(self.processes.len() as u32)
     }
 
     pub fn reset(&mut self) {
         self.processes.clear();
     }
 
-    /// Execute scheduling and return iterator
-    pub fn schedule(&mut self) -> RRScheduleIterator {
-        RRScheduleIterator::new(
-            self.time_quantum,
-            Rc::clone(self.scheduler_ref.as_ref().unwrap()),
-        )
+    pub fn schedule(&mut self) -> RRScheduleIterator<F> {
+        RRScheduleIterator::new(Rc::clone(self.scheduler_ref.as_ref().unwrap()))
     }
 }
 
-impl Scheduler for RRScheduler {
+impl<F> Scheduler for RRScheduler<F>
+where
+    F: Fn(u32) -> u32 + 'static,
+{
     fn add_process(&mut self, process: Process) {
         self.processes.push(process);
     }
 
     fn schedule(&mut self) -> Box<dyn Iterator<Item = SchedulingEvent>> {
-        Box::new(RRScheduleIterator::new(
-            self.time_quantum,
-            Rc::clone(self.scheduler_ref.as_ref().unwrap()),
-        ))
+        Box::new(RRScheduleIterator::new(Rc::clone(
+            self.scheduler_ref.as_ref().unwrap(),
+        )))
     }
 }
 
 #[test]
 fn test_empty_scheduler() {
-    let scheduler = RRScheduler::new(4);
+    let scheduler = RRScheduler::new(|_| 4);
     let mut iter = scheduler.borrow_mut().schedule();
     let mut events = Vec::new();
     while let Some(event) = iter.next() {
@@ -152,7 +149,7 @@ fn test_empty_scheduler() {
 #[test]
 fn test_single_process_simple() {
     // Process with burst time less than quantum completes in one go
-    let scheduler = RRScheduler::new(10);
+    let scheduler = RRScheduler::new(|_| 10);
     scheduler.borrow_mut().add_process(Process::new(1, 5));
 
     let mut iter = scheduler.borrow_mut().schedule();
